@@ -2,7 +2,9 @@
 
 We present VoxelKP, a novel fully sparse network architecture tailored for human keypoint estimation in LiDAR data. We achieved the state-of-the-art performances without additional data.
 
-<img src="docs/arch.png">
+## Performance Demo
+
+[![Watch the video](https://img.youtube.com/vi/u-xHv_OAO0M/hqdefault.jpg)](https://youtu.be/u-xHv_OAO0M)
 
 ## Benchmarks
 
@@ -36,6 +38,10 @@ Our visual results show that our VoxelKP offers improved keypoint estimation wit
 <em>
 A visual demonstration of our baseline model (top) and the proposed VoxelKP (bottom).  The insets are color-coded according to the legend in the figure. In the green-colored insets, a comparison with the ground truth is shown, with ground truth in red and predictions in blue.
 </em>
+
+## Architecture
+
+<img src="docs/arch.png">
 
 ## Installation
 
