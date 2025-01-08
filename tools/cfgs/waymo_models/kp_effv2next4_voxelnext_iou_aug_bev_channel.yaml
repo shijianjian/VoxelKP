@@ -1,0 +1,123 @@
+CLASS_NAMES: ['Pedestrian', 'Cyclist']
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/dataset_configs/waymo_dataset_kp_augv2.yaml
+    # _BASE_CONFIG_: cfgs/dataset_configs/waymo_dataset_kp.yaml
+    SAMPLED_INTERVAL: {
+        'train': 1,
+        'test': 1
+    }
+
+MODEL:
+    NAME: VoxelNeXt
+
+    VFE:
+        NAME: MeanVFE
+
+    BACKBONE_3D:
+        NAME: VoxelResBackBone8xVoxelNeXtEffv2Next4
+        SPCONV_KERNEL_SIZES: [5, 5, 3, 3]
+        OUT_CHANNEL: 384
+        BEV_CHANNEL: 384
+        CHANNELS: [32, 64, 128, 256, 256]
+
+    DENSE_HEAD:
+        NAME: VoxelNeXtHeadKPMerge
+        IOU_BRANCH: True
+        CLASS_AGNOSTIC: False
+        INPUT_FEATURES: 384
+ 
+        MAP_CLASS_NAMES: {
+            'Pedestrian': 'Human',
+            'Cyclist': 'Human',
+        }  # merge_class in waymo_dataset_kp
+        CLASS_NAMES_EACH_HEAD: [
+            ['Human']
+        ]
+
+        SHARED_CONV_CHANNEL: 384
+        USE_BIAS_BEFORE_NORM: True
+        NUM_HM_CONV: 2
+        SEPARATE_HEAD_CFG:
+            HEAD_ORDER: [ 'dim', 'rot' ]  # xyz in loc
+            KP_HEAD_ORDER: [ 'loc_x', 'loc_y', 'loc_z' ]
+            HEAD_DICT: {
+                'dim': {'out_channels': 3, 'num_conv': 2},
+                'rot': {'out_channels': 2, 'num_conv': 2},
+                'iou': {'out_channels': 1, 'num_conv': 2},
+                'loc_x': { 'out_channels': 15, 'num_conv': 2 },
+                'loc_y': { 'out_channels': 15, 'num_conv': 2 },
+                'loc_z': { 'out_channels': 15, 'num_conv': 2 },
+                'kp_vis': { 'out_channels': 14, 'num_conv': 2 },
+            }
+        RECTIFIER: [0.68, 0.71, 0.65]
+        TARGET_ASSIGNER_CONFIG:
+            FEATURE_MAP_STRIDE: 8
+            NUM_MAX_OBJS: 500
+            GAUSSIAN_OVERLAP: 0.1
+            MIN_RADIUS: 2
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 2.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                'kp_x_code_weights': [
+                    1.0, 1.0, 1.0, 1.0, 1.0, 3.0, 3.0,
+                    1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 1.0,
+                ],
+                'kp_y_code_weights': [
+                    1.0, 1.0, 1.0, 1.0, 1.0, 3.0, 3.0,
+                    1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 1.0,
+                ],
+                'kp_z_code_weights': [
+                    1.0, 1.0, 1.0, 1.0, 1.0, 3.0, 3.0,
+                    1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 1.0,
+                ],
+                # Since the sum operation of the loss
+                'kp_x_loc_weight': 2,
+                'kp_y_loc_weight': 2,
+                'kp_z_loc_weight': 2,
+                'kp_visibility_code_weights': [
+                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                ],
+                'kp_visibility_weights': 1,
+            }
+
+        POST_PROCESSING:
+            SCORE_THRESH: 0.3
+            POST_CENTER_LIMIT_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
+            MAX_OBJ_PER_SAMPLE: 500
+            NMS_CONFIG:
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: [0.8, 0.55, 0.55] #0.7
+                NMS_PRE_MAXSIZE: [2048, 1024, 1024] #[4096]
+                NMS_POST_MAXSIZE: [200, 150, 150] #500
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+
+        EVAL_METRIC: waymo
+
+
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 2
+    NUM_EPOCHS: 12
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.003
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [25, 35]
+    LR_DECAY: 0.3
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10

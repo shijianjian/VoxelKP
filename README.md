@@ -6,6 +6,23 @@ We present VoxelKP, a novel fully sparse network architecture tailored for human
 
 [![Watch the video](https://img.youtube.com/vi/u-xHv_OAO0M/hqdefault.jpg)](https://youtu.be/u-xHv_OAO0M)
 
+## Installation
+
+Please refer to the installation of `OpenPCDet`.
+
+## Getting Started
+
+Please refer to [GETTING_STARTED.md](docs/GETTING_STARTED.md) to learn more usage about this project.
+
+This is the inference only code.
+
+Checkpoints can be downloaded from [here](https://huggingface.co/shijianjian/VoxelKP).
+
+```bash
+$ cd tools
+$ python waymo_visualizer.py --ckpt CHECKPOINT
+```
+
 ## Benchmarks
 
 There is a limited number of relevant research for this task. Most of the prior works utilize additional training data beyond the 3D keypoint data within the Waymo dataset. To provide a fair comparison, we need to consider approaches that use extra data and those that rely solely on Waymo ground truth separately. 
@@ -43,13 +60,7 @@ A visual demonstration of our baseline model (top) and the proposed VoxelKP (bot
 
 <img src="docs/arch.png">
 
-## Installation
-
-Please refer to the installation of `OpenPCDet`.
-
-## Getting Started
-
-Please refer to [GETTING_STARTED.md](docs/GETTING_STARTED.md) to learn more usage about this project.
-
 ## Acknowledgement
 This repository is built on top of `OpenPCDet` and `VoxelNeXt`.
+
+We use `sptr` implementation from [here](https://github.com/dvlab-research/SparseTransformer).
