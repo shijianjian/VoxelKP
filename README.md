@@ -23,6 +23,28 @@ $ cd tools
 $ python waymo_visualizer.py --ckpt CHECKPOINT
 ```
 
+## Train
+
+1. Prepare dataset, referring to [OpenPCDet](https://github.com/open-mmlab/OpenPCDet/blob/master/docs/GETTING_STARTED.md).
+
+2. Install the module for compling.
+```bash
+$ pip install -e .
+```
+
+3. The training script.
+
+```bash
+$ python train.py  --cfg_file ./cfgs/waymo_models/kp_effv2next4_voxelnext_iou_aug_bev_channel.yaml --epochs 20
+```
+
+if using multiple GPUs
+
+```bash
+$ bash scripts/dist_train.sh 8 --cfg_file ./cfgs/waymo_models/kp_effv2next4_voxelnext_iou_aug_bev_channel.yaml --epochs 36 --workers 0
+```
+
+
 ## Benchmarks
 
 There is a limited number of relevant research for this task. Most of the prior works utilize additional training data beyond the 3D keypoint data within the Waymo dataset. To provide a fair comparison, we need to consider approaches that use extra data and those that rely solely on Waymo ground truth separately. 

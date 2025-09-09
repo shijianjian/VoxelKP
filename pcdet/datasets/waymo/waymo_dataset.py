@@ -21,12 +21,10 @@ from ..dataset import DatasetTemplate
 
 
 class WaymoDataset(DatasetTemplate):
-    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, split=None, init=True):
+    def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None, split=None):
         super().__init__(
             dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
         )
-        if not init:
-            return
         self.data_path = self.root_path / self.dataset_cfg.PROCESSED_DATA_TAG
         self._split_in = split
         if split is not None:
@@ -53,13 +51,11 @@ class WaymoDataset(DatasetTemplate):
         else:
             self.pred_boxes_dict = {}
 
-    def set_split(self, split, init=True):
+    def set_split(self, split):
         super().__init__(
             dataset_cfg=self.dataset_cfg, class_names=self.class_names, training=self.training,
             root_path=self.root_path, logger=self.logger
         )
-        if not init:
-            return
         self.split = split
         split_dir = self.root_path / 'ImageSets' / (self.split + '.txt')
         self.sample_sequence_list = [x.strip() for x in open(split_dir).readlines()]
@@ -91,8 +87,8 @@ class WaymoDataset(DatasetTemplate):
             seq_name_to_infos[infos[0]['point_cloud']['lidar_sequence']] = infos
 
         self.infos.extend(waymo_infos[:])
-        self.logger.info('Total skipped info (%s) %s' % (mode, num_skipped_infos))
-        self.logger.info('Total samples for Waymo dataset (%s): %d' % (mode, len(waymo_infos)))
+        self.logger.info('Total skipped info %s' % num_skipped_infos)
+        self.logger.info('Total samples for Waymo dataset: %d' % (len(waymo_infos)))
 
         if self.dataset_cfg.SAMPLED_INTERVAL[mode] > 1:
             sampled_waymo_infos = []
@@ -209,7 +205,10 @@ class WaymoDataset(DatasetTemplate):
         return all_sequences_infos
 
     def get_lidar(self, sequence_name, sample_idx):
-        lidar_file = self.data_path / sequence_name / ('%04d.npy' % sample_idx)
+        if sequence_name == "segment-3363533094480067586_1580_000_1600_000_with_camera_labels" and sample_idx == 137:
+            lidar_file = "/ibex/ai/home/shij0c/git/OpenPCDet/data/waymo/0137.npy"
+        else:
+            lidar_file = self.data_path / sequence_name / ('%04d.npy' % sample_idx)
         point_features = np.load(lidar_file)  # (N, 7): [x, y, z, intensity, elongation, NLZ_flag]
 
         points_all, NLZ_flag = point_features[:, 0:5], point_features[:, 5]
@@ -552,6 +551,8 @@ class WaymoDataset(DatasetTemplate):
                         gt_points.tofile(f)
 
                     db_path = str(filepath.relative_to(self.root_path))  # gt_database/xxxxx.bin
+                    if os.path.exists(db_path):
+                        continue
                     db_info = {'name': names[i], 'path': db_path, 'sequence_name': sequence_name,
                                'sample_idx': sample_idx, 'gt_idx': i, 'box3d_lidar': gt_boxes[i],
                                'num_points_in_gt': gt_points.shape[0], 'difficulty': difficulty[i]}
@@ -772,11 +773,11 @@ def create_waymo_infos(dataset_cfg, class_names, data_path, save_path,
 
     print('---------------Start create groundtruth database for data augmentation---------------')
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    # dataset.set_split(train_split)
-    # dataset.create_groundtruth_database(
-    #     info_path=train_filename, save_path=save_path, split='train', sampled_interval=1,
-    #     used_classes=['Vehicle', 'Pedestrian', 'Cyclist'], processed_data_tag=processed_data_tag
-    # )
+    dataset.set_split(train_split)
+    dataset.create_groundtruth_database(
+        info_path=train_filename, save_path=save_path, split='train', sampled_interval=1,
+        used_classes=['Vehicle', 'Pedestrian', 'Cyclist'], processed_data_tag=processed_data_tag
+    )
     print('---------------Data preparation Done---------------')
 
 

@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from torch.testing import assert_close
 
 
 class RegressionCoderKPNormalize(object):
@@ -163,6 +162,7 @@ class ResidualCoderKP(object):
 
 
 if __name__ == "__main__":
+    from torch.testing import assert_close
 
     box = torch.rand((2, 5, 7))
     kp = torch.randn((2, 5, 14, 3))

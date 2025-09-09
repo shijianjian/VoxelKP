@@ -8,61 +8,15 @@ import pickle
 import copy
 import numpy as np
 import SharedArray
+import torch.distributed as dist
+from tqdm import tqdm
+from pathlib import Path
 
 from ...utils import box_utils, common_utils
 from .waymo_dataset import WaymoDataset
 
 
 class WaymoDatasetKP(WaymoDataset):
-    def __init__(
-        self, dataset_cfg, class_names, training=True, root_path=None, logger=None, split=None,
-        inference_mode=False
-    ):
-        # inference_mode tries to load all the frames without filtering.
-        super().__init__(
-            dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger,
-            split=split, init=False
-        )
-
-        self.data_path = self.root_path / self.dataset_cfg.PROCESSED_DATA_TAG
-        self._split_in = split
-        if split is not None:
-            mode = split
-            assert mode == "train" or mode == "test"
-        else:
-            mode = self.mode
-        self.split = self.dataset_cfg.DATA_SPLIT[mode]
-        split_dir = self.root_path / 'ImageSets' / (self.split + '.txt')
-        self.sample_sequence_list = [x.strip() for x in open(split_dir).readlines()]
-
-        self.infos = []
-        self.inference_mode = inference_mode
-        self.seq_name_to_infos = self.include_waymo_data(mode, keypoints_only=not inference_mode)
-
-        self.use_shared_memory = self.dataset_cfg.get('USE_SHARED_MEMORY', False) and self.training
-        if self.use_shared_memory:
-            self.shared_memory_file_limit = self.dataset_cfg.get('SHARED_MEMORY_FILE_LIMIT', 0x7FFFFFFF)
-            self.load_data_to_shared_memory()
-
-        if self.dataset_cfg.get('USE_PREDBOX', False):
-            self.pred_boxes_dict = self.load_pred_boxes_to_dict(
-                pred_boxes_path=self.dataset_cfg.ROI_BOXES_PATH[mode]
-            )
-        else:
-            self.pred_boxes_dict = {}
-
-    def set_split(self, split):
-        super().set_split(split=split, init=False)
-        self.split = split
-        split_dir = self.root_path / 'ImageSets' / (self.split + '.txt')
-        self.sample_sequence_list = [x.strip() for x in open(split_dir).readlines()]
-        self.infos = []
-        if self._split_in is not None:
-            mode = split
-            assert mode == "train" or mode == "test"
-        else:
-            mode = self.mode
-        self.seq_name_to_infos = self.include_waymo_data(mode, keypoints_only=self.remove_frames_without_kp_anno)
 
     def actual_class_name(self):
         if self.dataset_cfg.get("LABEL_MAPPING", None):
@@ -101,7 +55,20 @@ class WaymoDatasetKP(WaymoDataset):
                 voxel_num_points: optional (num_voxels)
                 ...
         """
+        if self.training:
+            assert 'gt_boxes' in data_dict, 'gt_boxes should be provided for training'
+            gt_boxes_mask = np.array([n in self.class_names for n in data_dict['gt_names']], dtype=np.bool_)
 
+            if 'calib' in data_dict:
+                calib = data_dict['calib']
+            data_dict = self.data_augmentor.forward(
+                data_dict={
+                    **data_dict,
+                    'gt_boxes_mask': gt_boxes_mask
+                }
+            )
+            if 'calib' in data_dict:
+                data_dict['calib'] = calib
         data_dict = self.set_lidar_aug_matrix(data_dict)
 
         class_names = self.actual_class_name()
@@ -134,12 +101,16 @@ class WaymoDatasetKP(WaymoDataset):
             data_dict=data_dict
         )
 
+        if self.training and len(data_dict['gt_boxes']) == 0:
+            new_index = np.random.randint(self.__len__())
+            return self.__getitem__(new_index)
+
         data_dict.pop('gt_names', None)
 
         return data_dict
 
     def include_waymo_data(self, mode, keypoints_only=True):
-        self.logger.info('Loading Waymo dataset KP')
+        self.logger.info('Loading Waymo dataset')
         waymo_infos = []
         seq_name_to_infos = {}
 
@@ -168,8 +139,8 @@ class WaymoDatasetKP(WaymoDataset):
             seq_name_to_infos[infos[0]['point_cloud']['lidar_sequence']] = infos
 
         self.infos.extend(waymo_infos[:])
-        self.logger.info('Total skipped info (%s) %s' % (mode, num_skipped_infos))
-        self.logger.info('Total samples for Waymo dataset Keypoints (%s): %d' % (mode, len(waymo_infos)))
+        self.logger.info('Total skipped info %s' % num_skipped_infos)
+        self.logger.info('Total samples for Waymo dataset: %d' % (len(waymo_infos)))
 
         if self.dataset_cfg.SAMPLED_INTERVAL[mode] > 1:
             sampled_waymo_infos = []
@@ -302,34 +273,7 @@ class WaymoDatasetKP(WaymoDataset):
             'frame_id': info['frame_id'],
         })
 
-        if self.inference_mode:
-            input_dict.update({
-                'gt_names': np.array(["Pedestrian"]),
-                'gt_boxes': np.random.rand(1, 7),
-                'num_points_in_gt': np.array([505.]),
-                # Load keypoints
-                # 'keypoint_index': annos["keypoint_index"],
-                'keypoint_location': np.random.rand(1, 14, 3),
-                'keypoint_visibility': np.ones((1, 14)),
-                'keypoint_mask': np.ones((1, 14)),
-                # 'keypoint_dims': annos["keypoint_dims"],
-                # 'keypoint_has_batch_dimension': annos["keypoint_has_batch_dimension"],
-                # 'keypoint_box_center': annos["keypoint_box_center"],
-                # 'keypoint_box_size': annos["keypoint_box_size"],
-                # Corresponding box attributes if keypoint exists
-                # 'keypoint_box_name': annos["keypoint_box_name"],
-                # 'keypoint_box_difficulty': annos["keypoint_box_difficulty"],
-                # 'keypoint_box_dimensions': annos["keypoint_box_dimensions"],
-                # 'keypoint_box_location': annos["keypoint_box_location"],
-                # 'keypoint_box_heading_angles': annos["keypoint_box_heading_angles"],
-                # 'keypoint_box_obj_ids': annos["keypoint_box_obj_ids"],
-                # 'keypoint_box_tracking_difficulty': annos["keypoint_box_tracking_difficulty"],
-                # 'keypoint_box_num_points_in_gt': annos["keypoint_box_num_points_in_gt"],
-                # 'keypoint_box_speed_global': annos["keypoint_box_speed_global"],
-                # 'keypoint_box_accel_global': annos["keypoint_box_accel_global"],
-            })
-
-        if not self.inference_mode and 'annos' in info:
+        if 'annos' in info:
             annos = info['annos']
             annos = common_utils.drop_info_with_name(annos, name='unknown', ignore_name="keypoint")
 
@@ -360,6 +304,11 @@ class WaymoDatasetKP(WaymoDataset):
             else:
                 gt_boxes_lidar = gt_boxes_lidar[:, 0:7]
 
+            if self.training and self.dataset_cfg.get('FILTER_EMPTY_BOXES_FOR_TRAIN', False):
+                mask = (annos['keypoint_box_num_points_in_gt'] > 0)  # filter empty boxes
+                annos['keypoint_box_name'] = annos['keypoint_box_name'][mask]
+                gt_boxes_lidar = gt_boxes_lidar[mask]
+                annos['keypoint_box_num_points_in_gt'] = annos['keypoint_box_num_points_in_gt'][mask]
             input_dict.update({
                 'gt_names': annos['keypoint_box_name'],
                 'gt_boxes': gt_boxes_lidar,

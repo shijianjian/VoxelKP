@@ -70,17 +70,17 @@ class DataBaseSampler(object):
     def __setstate__(self, d):
         self.__dict__.update(d)
 
-    def __del__(self):
-        if self.use_shared_memory:
-            self.logger.info('Deleting GT database from shared memory')
-            cur_rank, num_gpus = common_utils.get_dist_info()
-            sa_key = self.sampler_cfg.DB_DATA_PATH[0]
-            if cur_rank % num_gpus == 0 and os.path.exists(f"/dev/shm/{sa_key}"):
-                SharedArray.delete(f"shm://{sa_key}")
+    # def __del__(self):
+    #     if self.use_shared_memory:
+    #         self.logger.info('Deleting GT database from shared memory')
+    #         cur_rank, num_gpus = common_utils.get_dist_info()
+    #         sa_key = self.sampler_cfg.DB_DATA_PATH[0]
+    #         if cur_rank % num_gpus == 0 and os.path.exists(f"/dev/shm/{sa_key}"):
+    #             SharedArray.delete(f"shm://{sa_key}")
 
-            if num_gpus > 1:
-                dist.barrier()
-            self.logger.info('GT database has been removed from shared memory')
+    #         if num_gpus > 1:
+    #             dist.barrier()
+    #         self.logger.info('GT database has been removed from shared memory')
 
     def load_db_to_shared_memory(self):
         self.logger.info('Loading GT database to shared memory')
@@ -137,11 +137,32 @@ class DataBaseSampler(object):
 
         """
         sample_num, pointer, indices = int(sample_group['sample_num']), sample_group['pointer'], sample_group['indices']
-        if pointer >= len(self.db_infos[class_name]):
-            indices = np.random.permutation(len(self.db_infos[class_name]))
+        
+        is_kp = self.sampler_cfg.get("IS_KEYPOINT", False)
+
+        if is_kp and class_name != "Vehicle":
+            indices = [i for i in range(len(self.db_infos[class_name])) if 'kp3d_lidar' in self.db_infos[class_name][i].keys()]
+        else:
+            # indices = range(len(self.db_infos[class_name]))
+            indices = [i for i in range(len(self.db_infos[class_name])) if 'kp3d_lidar' not in self.db_infos[class_name][i].keys()]
+
+        indices = np.array(indices)
+        if pointer >= len(indices):
+            np.random.shuffle(indices)
             pointer = 0
 
+        # if pointer >= len(self.db_infos[class_name]):
+        #     indices = np.random.permutation(len(self.db_infos[class_name]))
+        #     pointer = 0
+
+        # assert False, (len(b), self.db_infos['Pedestrian'][b[0]].keys())
+
         sampled_dict = [self.db_infos[class_name][idx] for idx in indices[pointer: pointer + sample_num]]
+        # if is_kp:
+        #     b = [i for i in range(len(sampled_dict)) if 'kp3d_lidar' in sampled_dict[i].keys()]
+        # else:
+        # b = [i for i in range(len(sampled_dict)) if 'kp3d_lidar' in sampled_dict[i].keys()]
+
         pointer += sample_num
         sample_group['pointer'] = pointer
         sample_group['indices'] = indices
@@ -363,12 +384,18 @@ class DataBaseSampler(object):
             raise NotImplementedError
         return data_dict
 
-    def add_sampled_boxes_to_scene(self, data_dict, sampled_gt_boxes, total_valid_sampled_dict, mv_height=None, sampled_gt_boxes2d=None):
+    def add_sampled_boxes_to_scene(
+        self, data_dict, sampled_gt_boxes, total_valid_sampled_dict, mv_height=None, sampled_gt_boxes2d=None,
+        sampled_gt_kps=None, sampled_gt_kps_visibility=None, sampled_gt_kps_mask=None,
+    ):
         gt_boxes_mask = data_dict['gt_boxes_mask']
         gt_boxes = data_dict['gt_boxes'][gt_boxes_mask]
         gt_names = data_dict['gt_names'][gt_boxes_mask]
+
         points = data_dict['points']
         if self.sampler_cfg.get('USE_ROAD_PLANE', False) and mv_height is None:
+            if self.sampler_cfg.get("IS_KEYPOINT", False):
+                raise NotImplementedError
             sampled_gt_boxes, mv_height = self.put_boxes_on_road_planes(
                 sampled_gt_boxes, data_dict['road_plane'], data_dict['calib']
             )
@@ -392,7 +419,6 @@ class DataBaseSampler(object):
                 obj_points = copy.deepcopy(gt_database_data[start_offset:end_offset])
             else:
                 file_path = self.root_path / info['path']
-
                 obj_points = np.fromfile(str(file_path), dtype=np.float32).reshape(
                     [-1, self.sampler_cfg.NUM_POINT_FEATURES])
                 if obj_points.shape[0] != info['num_points_in_gt']:
@@ -402,10 +428,14 @@ class DataBaseSampler(object):
             obj_points[:, :3] += info['box3d_lidar'][:3].astype(np.float32)
 
             if self.sampler_cfg.get('USE_ROAD_PLANE', False):
+                if self.sampler_cfg.get("IS_KEYPOINT", False):
+                    raise NotImplementedError
                 # mv height
                 obj_points[:, 2] -= mv_height[idx]
 
             if self.img_aug_type is not None:
+                if self.sampler_cfg.get("IS_KEYPOINT", False):
+                    raise NotImplementedError
                 img_aug_gt_dict, obj_points = self.collect_image_crops(
                     img_aug_gt_dict, info, data_dict, obj_points, sampled_gt_boxes, sampled_gt_boxes2d, idx
                 )
@@ -416,6 +446,8 @@ class DataBaseSampler(object):
         sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])
 
         if self.sampler_cfg.get('FILTER_OBJ_POINTS_BY_TIMESTAMP', False) or obj_points.shape[-1] != points.shape[-1]:
+            if self.sampler_cfg.get("IS_KEYPOINT", False):
+                raise NotImplementedError
             if self.sampler_cfg.get('FILTER_OBJ_POINTS_BY_TIMESTAMP', False):
                 min_time = min(self.sampler_cfg.TIME_RANGE[0], self.sampler_cfg.TIME_RANGE[1])
                 max_time = max(self.sampler_cfg.TIME_RANGE[0], self.sampler_cfg.TIME_RANGE[1])
@@ -438,7 +470,16 @@ class DataBaseSampler(object):
         data_dict['gt_names'] = gt_names
         data_dict['points'] = points
 
+        if sampled_gt_kps is not None:
+            data_dict['keypoint_location'] = np.concatenate([data_dict['keypoint_location'][gt_boxes_mask], sampled_gt_kps], axis=0)
+        if sampled_gt_kps_visibility is not None:
+            data_dict['keypoint_visibility'] = np.concatenate([data_dict['keypoint_visibility'][gt_boxes_mask], sampled_gt_kps_visibility], axis=0)
+        if sampled_gt_kps_mask is not None:
+            data_dict['keypoint_mask'] = np.concatenate([data_dict['keypoint_mask'][gt_boxes_mask], sampled_gt_kps_mask], axis=0)
+
         if self.img_aug_type is not None:
+            if self.sampler_cfg.get("IS_KEYPOINT", False):
+                raise NotImplementedError
             data_dict = self.copy_paste_to_image(img_aug_gt_dict, data_dict, points)
 
         return data_dict
@@ -458,8 +499,22 @@ class DataBaseSampler(object):
         total_valid_sampled_dict = []
         sampled_mv_height = []
         sampled_gt_boxes2d = []
+        if 'keypoint_location' in data_dict:
+            gt_kps = data_dict['keypoint_location']
+            gt_kps_visibility = data_dict['keypoint_visibility']
+            gt_kps_mask = data_dict['keypoint_mask']
+            existed_kps = gt_kps
+            existed_kps_visibility = gt_kps_visibility
+            existed_kps_mask = gt_kps_mask
+        else:
+            sampled_gt_kps, sampled_gt_kps_visibility, sampled_gt_kps_mask = None, None, None
 
         for class_name, sample_group in self.sample_groups.items():
+
+            if class_name == "Vehicle":
+                data_dict = self.add_without_updating_gt(data_dict, class_name, sample_group)
+                continue
+
             if self.limit_whole_scene:
                 num_gt = np.sum(class_name == gt_names)
                 sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
@@ -467,7 +522,12 @@ class DataBaseSampler(object):
                 sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
 
                 sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
+                if 'keypoint_location' in data_dict:
+                    sampled_kps = np.stack([x['kp3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
+                    sampled_kp_visibility = np.stack([x['kp_visibility'] for x in sampled_dict], axis=0).astype(np.float32)
+                    sampled_kp_mask = np.stack([x['kp_mask'] for x in sampled_dict], axis=0).astype(np.float32)
 
+                # assert False, (data_dict.keys(), sampled_boxes.shape, sampled_kps.shape, sampled_kp_visibility.shape, sampled_kp_mask.shape)
                 assert not self.sampler_cfg.get('DATABASE_WITH_FAKELIDAR', False), 'Please use latest codes to generate GT_DATABASE'
 
                 iou1 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], existed_boxes[:, 0:7])
@@ -485,9 +545,88 @@ class DataBaseSampler(object):
                 valid_mask = valid_mask.nonzero()[0]
                 valid_sampled_dict = [sampled_dict[x] for x in valid_mask]
                 valid_sampled_boxes = sampled_boxes[valid_mask]
+                if 'keypoint_location' in data_dict:
+                    valid_sampled_kps = sampled_kps[valid_mask]
+                    valid_sampled_kp_visibility = sampled_kp_visibility[valid_mask]
+                    valid_sampled_kp_mask = sampled_kp_mask[valid_mask]
 
                 existed_boxes = np.concatenate((existed_boxes, valid_sampled_boxes[:, :existed_boxes.shape[-1]]), axis=0)
+                if 'keypoint_location' in data_dict:
+                    existed_kps = np.concatenate((existed_kps, valid_sampled_kps), axis=0)
+                    existed_kps_visibility = np.concatenate((existed_kps_visibility, valid_sampled_kp_visibility), axis=0)
+                    existed_kps_mask = np.concatenate((existed_kps_mask, valid_sampled_kp_mask), axis=0)
                 total_valid_sampled_dict.extend(valid_sampled_dict)
+
+                # if exists:
+                #     sampled_keypoints = np.stack([x['kp3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
+                #     valid_sampled_kps = sampled_keypoints[valid_mask]
+                #     existed_kps = np.concatenate((existed_kps, valid_sampled_kps[:, :existed_kps.shape[-1]]), axis=0)
+        sampled_gt_boxes = existed_boxes[gt_boxes.shape[0]:, :]
+        if 'keypoint_location' in data_dict:
+            sampled_gt_kps = existed_kps[gt_kps.shape[0]:, :]
+            sampled_gt_kps_visibility = existed_kps_visibility[gt_kps_visibility.shape[0]:, :]
+            sampled_gt_kps_mask = existed_kps_mask[gt_kps_mask.shape[0]:, :]
+        if total_valid_sampled_dict.__len__() > 0:
+
+            sampled_gt_boxes2d = np.concatenate(sampled_gt_boxes2d, axis=0) if len(sampled_gt_boxes2d) > 0 else None
+            sampled_mv_height = np.concatenate(sampled_mv_height, axis=0) if len(sampled_mv_height) > 0 else None
+
+            data_dict = self.add_sampled_boxes_to_scene(
+                data_dict, sampled_gt_boxes, total_valid_sampled_dict, sampled_mv_height, sampled_gt_boxes2d,
+                sampled_gt_kps, sampled_gt_kps_visibility, sampled_gt_kps_mask
+            )
+
+        data_dict.pop('gt_boxes_mask')
+        if 'keypoint_location' in data_dict:
+            assert data_dict['keypoint_location'].shape[0] == data_dict['keypoint_visibility'].shape[0] == data_dict['keypoint_mask'].shape[0] == data_dict['gt_boxes'].shape[0], (
+                data_dict['keypoint_location'].shape, data_dict['keypoint_visibility'].shape, data_dict['keypoint_mask'].shape, data_dict['gt_boxes'].shape[0]
+            )
+        return data_dict
+
+    def add_without_updating_gt(self, data_dict, class_name, sample_group):
+        """
+        Args:
+            data_dict:
+                gt_boxes: (N, 7 + C) [x, y, z, dx, dy, dz, heading, ...]
+
+        Returns:
+
+        """
+        gt_boxes = data_dict['gt_boxes']
+        gt_names = data_dict['gt_names'].astype(str)
+        existed_boxes = gt_boxes
+        total_valid_sampled_dict = []
+        sampled_mv_height = []
+        sampled_gt_boxes2d = []
+
+        if self.limit_whole_scene:
+            num_gt = np.sum(class_name == gt_names)
+            sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
+        if int(sample_group['sample_num']) > 0:
+            sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
+
+            sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
+
+            assert not self.sampler_cfg.get('DATABASE_WITH_FAKELIDAR', False), 'Please use latest codes to generate GT_DATABASE'
+
+            iou1 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], existed_boxes[:, 0:7])
+            iou2 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], sampled_boxes[:, 0:7])
+            iou2[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0
+            iou1 = iou1 if iou1.shape[1] > 0 else iou2
+            valid_mask = ((iou1.max(axis=1) + iou2.max(axis=1)) == 0)
+
+            if self.img_aug_type is not None:
+                sampled_boxes2d, mv_height, valid_mask = self.sample_gt_boxes_2d(data_dict, sampled_boxes, valid_mask)
+                sampled_gt_boxes2d.append(sampled_boxes2d)
+                if mv_height is not None:
+                    sampled_mv_height.append(mv_height)
+
+            valid_mask = valid_mask.nonzero()[0]
+            valid_sampled_dict = [sampled_dict[x] for x in valid_mask]
+            valid_sampled_boxes = sampled_boxes[valid_mask]
+
+            existed_boxes = np.concatenate((existed_boxes, valid_sampled_boxes[:, :existed_boxes.shape[-1]]), axis=0)
+            total_valid_sampled_dict.extend(valid_sampled_dict)
 
         sampled_gt_boxes = existed_boxes[gt_boxes.shape[0]:, :]
 
@@ -495,9 +634,86 @@ class DataBaseSampler(object):
             sampled_gt_boxes2d = np.concatenate(sampled_gt_boxes2d, axis=0) if len(sampled_gt_boxes2d) > 0 else None
             sampled_mv_height = np.concatenate(sampled_mv_height, axis=0) if len(sampled_mv_height) > 0 else None
 
-            data_dict = self.add_sampled_boxes_to_scene(
-                data_dict, sampled_gt_boxes, total_valid_sampled_dict, sampled_mv_height, sampled_gt_boxes2d
-            )
+            gt_boxes_mask = data_dict['gt_boxes_mask']
+            gt_boxes = data_dict['gt_boxes'][gt_boxes_mask]
+            gt_names = data_dict['gt_names'][gt_boxes_mask]
+            points = data_dict['points']
+            if self.sampler_cfg.get('USE_ROAD_PLANE', False) and mv_height is None:
+                if self.sampler_cfg.get("IS_KEYPOINT", False):
+                    raise NotImplementedError
+                sampled_gt_boxes, mv_height = self.put_boxes_on_road_planes(
+                    sampled_gt_boxes, data_dict['road_plane'], data_dict['calib']
+                )
+                # data_dict.pop('calib')
+                # data_dict.pop('road_plane')
 
-        data_dict.pop('gt_boxes_mask')
+            obj_points_list = []
+
+            # convert sampled 3D boxes to image plane
+            img_aug_gt_dict = self.initilize_image_aug_dict(data_dict, gt_boxes_mask)
+
+            if self.use_shared_memory:
+                gt_database_data = SharedArray.attach(f"shm://{self.gt_database_data_key}")
+                gt_database_data.setflags(write=0)
+            else:
+                gt_database_data = None
+
+            for idx, info in enumerate(total_valid_sampled_dict):
+                if self.use_shared_memory:
+                    start_offset, end_offset = info['global_data_offset']
+                    obj_points = copy.deepcopy(gt_database_data[start_offset:end_offset])
+                else:
+                    file_path = self.root_path / info['path']
+
+                    obj_points = np.fromfile(str(file_path), dtype=np.float32).reshape(
+                        [-1, self.sampler_cfg.NUM_POINT_FEATURES])
+                    if obj_points.shape[0] != info['num_points_in_gt']:
+                        obj_points = np.fromfile(str(file_path), dtype=np.float64).reshape(-1, self.sampler_cfg.NUM_POINT_FEATURES)
+
+                assert obj_points.shape[0] == info['num_points_in_gt']
+                obj_points[:, :3] += info['box3d_lidar'][:3].astype(np.float32)
+
+                if self.sampler_cfg.get('USE_ROAD_PLANE', False):
+                    if self.sampler_cfg.get("IS_KEYPOINT", False):
+                        raise NotImplementedError
+                    # mv height
+                    obj_points[:, 2] -= mv_height[idx]
+
+                if self.img_aug_type is not None:
+                    if self.sampler_cfg.get("IS_KEYPOINT", False):
+                        raise NotImplementedError
+                    img_aug_gt_dict, obj_points = self.collect_image_crops(
+                        img_aug_gt_dict, info, data_dict, obj_points, sampled_gt_boxes, sampled_gt_boxes2d, idx
+                    )
+
+                obj_points_list.append(obj_points)
+
+            obj_points = np.concatenate(obj_points_list, axis=0)
+            # sampled_gt_names = np.array([x['name'] for x in total_valid_sampled_dict])
+
+            if self.sampler_cfg.get('FILTER_OBJ_POINTS_BY_TIMESTAMP', False) or obj_points.shape[-1] != points.shape[-1]:
+                if self.sampler_cfg.get("IS_KEYPOINT", False):
+                    raise NotImplementedError
+                if self.sampler_cfg.get('FILTER_OBJ_POINTS_BY_TIMESTAMP', False):
+                    min_time = min(self.sampler_cfg.TIME_RANGE[0], self.sampler_cfg.TIME_RANGE[1])
+                    max_time = max(self.sampler_cfg.TIME_RANGE[0], self.sampler_cfg.TIME_RANGE[1])
+                else:
+                    assert obj_points.shape[-1] == points.shape[-1] + 1
+                    # transform multi-frame GT points to single-frame GT points
+                    min_time = max_time = 0.0
+
+                time_mask = np.logical_and(obj_points[:, -1] < max_time + 1e-6, obj_points[:, -1] > min_time - 1e-6)
+                obj_points = obj_points[time_mask]
+
+            large_sampled_gt_boxes = box_utils.enlarge_box3d(
+                sampled_gt_boxes[:, 0:7], extra_width=self.sampler_cfg.REMOVE_EXTRA_WIDTH
+            )
+            points = box_utils.remove_points_in_boxes3d(points, large_sampled_gt_boxes)
+            points = np.concatenate([obj_points[:, :points.shape[-1]], points], axis=0)
+            # gt_names = np.concatenate([gt_names, sampled_gt_names], axis=0)
+            # gt_boxes = np.concatenate([gt_boxes, sampled_gt_boxes], axis=0)
+            # data_dict['gt_boxes'] = gt_boxes
+            # data_dict['gt_names'] = gt_names
+            data_dict['points'] = points
+
         return data_dict
