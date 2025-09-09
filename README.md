@@ -35,6 +35,7 @@ $ pip install -e .
 3. The training script.
 
 ```bash
+$ cd tools
 $ python train.py  --cfg_file ./cfgs/waymo_models/kp_effv2next4_voxelnext_iou_aug_bev_channel.yaml --epochs 20
 ```
 

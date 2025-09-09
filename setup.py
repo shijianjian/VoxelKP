@@ -33,7 +33,7 @@ if __name__ == '__main__':
     write_version_to_file(version, 'pcdet/version.py')
 
     setup(
-        name='pcdet',
+        name='voxelkp',
         version=version,
         description='OpenPCDet is a general codebase for 3D object detection from point cloud',
         install_requires=[

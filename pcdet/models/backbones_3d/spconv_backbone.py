@@ -339,7 +339,8 @@ class EfficientViTBlock(spconv.SparseModule):
 class SparseLayerNorm(spconv.SparseModule):
     def __init__(self, normalized_shape, eps=1e-05, elementwise_affine=True, device=None, dtype=None):
         super().__init__()
-        self.ln = nn.LayerNorm(normalized_shape, eps=eps, elementwise_affine=elementwise_affine, device=device, dtype=dtype)
+        # self.ln = nn.LayerNorm(normalized_shape, eps=eps, elementwise_affine=elementwise_affine, device=device, dtype=dtype)
+        self.ln = nn.LayerNorm(normalized_shape, eps=eps, elementwise_affine=elementwise_affine)
 
     def forward(self, input: spconv.SparseConvTensor) -> spconv.SparseConvTensor:
         out_feature = torch.zeros_like(input.features)
