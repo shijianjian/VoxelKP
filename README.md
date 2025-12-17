@@ -83,6 +83,17 @@ A visual demonstration of our baseline model (top) and the proposed VoxelKP (bot
 
 <img src="docs/arch.png">
 
+## Cite our work
+```
+@inproceedings{shi2025voxelkp,
+  title={VoxelKP: A Voxel-based Network Architecture for Human Keypoint Estimation in LiDAR Data},
+  author={Shi, Jian and Wonka, Peter},
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  pages={28282--28291},
+  year={2025}
+}
+```
+
 ## Acknowledgement
 This repository is built on top of `OpenPCDet` and `VoxelNeXt`.
 
